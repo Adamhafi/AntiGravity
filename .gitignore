@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+.gemini/
+user-memory/
+memory-store/
+.pytest_cache/
+*.log
