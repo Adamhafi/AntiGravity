@@ -1,6 +1,6 @@
 # AntiGravity Persistent Memory
 
-A lightweight, local memory layer for Google Antigravity. It helps the agent recall project decisions, confirmed fixes, user preferences, and unfinished work across conversations.
+A lightweight, local memory layer for **Antigravity 2.0 (the regular standalone app) and Antigravity IDE**. It helps the agent recall project decisions, confirmed fixes, user preferences, and unfinished work across conversations and across both apps.
 
 **File-based memory, not model training.** This package does not change your model, persona, permissions, or existing rules. It does not claim to make Antigravity universally better than another coding agent.
 
@@ -17,11 +17,24 @@ A lightweight, local memory layer for Google Antigravity. It helps the agent rec
 
 ## Requirements
 
-- Antigravity IDE with global rules and skills support.
+- Antigravity 2.0 (standalone), Antigravity IDE, or both, with global rules and skills support.
 - Python **3.12 or newer**, available as `python` (or substitute your interpreter command).
 - Git to clone this repository, or download and extract its ZIP.
 
 The helper and installer have been tested locally on Windows with Python 3.13. Other platforms have not yet been validated here.
+
+## App compatibility
+
+| App | Skill location | Rule location | Status |
+| --- | --- | --- | --- |
+| Antigravity 2.0, regular standalone app | `~/.gemini/config/skills/` | `~/.gemini/config/rules/` | Uses the documented shared locations; fresh-session activation needs an in-app check |
+| Antigravity IDE | `~/.gemini/config/skills/` | `~/.gemini/config/rules/` | Uses the documented shared locations; fresh-session activation needs an in-app check |
+
+**Install once for both.** No separate IDE installation is required to use the package from standalone Antigravity. Both apps must run under the same account and use the same absolute project root to recall the same project notes. A different clone or worktree intentionally has different project memory.
+
+The memory directory retains the initial name `~/.gemini/antigravity-ide/user-memory` to avoid splitting or relocating existing notes. It is an ordinary directory used by the Python helper, not an IDE API dependency. The installer does not enable unrestricted filesystem access; resolve any denied memory-path access narrowly in the affected app.
+
+The dedicated `agy` CLI has different documented global skill locations and is **not installed/configured by this package**. "Regular app" here means the Antigravity 2.0 desktop application, not that CLI.
 
 ## Install
 
@@ -64,12 +77,14 @@ No existing persona files, model settings, MCP configuration, or internal Antigr
 
 The rule asks the agent to use memory automatically. That is **model-mediated behavior**, not a guaranteed hook. A passing Python test does not prove that an Antigravity conversation loaded the skill.
 
-1. Open a fresh conversation in a project and check that `persistent-memory` appears in Customizations. If missing, finish ongoing work before reloading the application.
+1. Open a fresh conversation in a project and check that `persistent-memory` appears in Customizations. In standalone Antigravity, use the application menu or project settings. In Antigravity IDE, use the agent side panel's **... > Customizations** menu. If missing, finish ongoing work before reloading the application.
 2. Ask: **"Remember this project-only test note: the smoke-test label is cedar-orbit-47. Use note ID memory-smoke-test, mark it user-confirmed, and do not modify source code. Show the saved memory path."**
 3. Open another fresh conversation in the same project and ask: **"What smoke-test label did I ask you to remember? Retrieve it from persistent memory and show the source file."**
 4. Check visible tool activity for the actual saved-note read. If automatic selection fails, explicitly ask it to read the installed `persistent-memory/SKILL.md`. Explicit invocation and automatic selection are different checks.
 5. In a different project, the first project's test note should not appear.
 6. Clean up in the original project: **"Forget memory-smoke-test and its local revision history. Do not modify source code."**
+
+For a cross-app check, save the test note in standalone Antigravity, then perform step 3 in Antigravity IDE with the **same project folder**, or vice versa. Verify the visible read of the same note file. Python tests exercise the shared storage, not either application's model-driven activation.
 
 Use the same actual project root across conversations. If Antigravity denies a path or command, resolve only that access issue rather than disabling permissions globally.
 

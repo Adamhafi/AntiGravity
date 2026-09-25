@@ -1,4 +1,4 @@
-"""Install the memory skill and activation rule without replacing existing files."""
+"""Install shared memory integration for Antigravity 2.0 and Antigravity IDE."""
 import argparse
 import json
 from pathlib import Path
@@ -6,12 +6,15 @@ import sys
 
 
 SOURCE = Path(__file__).resolve().parent
+SUPPORTED_SURFACES = ["Antigravity 2.0 (standalone)", "Antigravity IDE"]
 
 
 def plan(home):
     home = Path(home).expanduser().resolve()
     skill = home / ".gemini/config/skills/persistent-memory"
     store = home / ".gemini/antigravity-ide/user-memory"
+    # Both apps discover the shared config paths. Keep the initial data location
+    # for compatibility; the helper does not depend on the IDE application.
     rule = home / ".gemini/config/rules/persistent-memory.md"
     substitutions = {"{{SKILL_DIR}}": skill.as_posix(), "{{MEMORY_DIR}}": store.as_posix()}
     sources = {
@@ -57,7 +60,9 @@ def install(home, dry_run=False):
         raise
     return {"dry_run": dry_run, "created": [str(p) for p in created],
             "files": [str(p) for p in files], "memories_imported": False,
-            "activation": "Open a fresh Antigravity conversation and verify visible skill/helper use."}
+            "supported_surfaces": SUPPORTED_SURFACES,
+            "memory_store": str(home / ".gemini/antigravity-ide/user-memory"),
+            "activation": "Verify visible skill/helper use in a fresh conversation in each app; file checks alone do not verify runtime activation."}
 
 
 def main():

@@ -1,6 +1,6 @@
 ---
 name: persistent-memory
-description: Recall and maintain source-backed project knowledge, user preferences, lessons, and task handoffs across Antigravity conversations. Use for continuing project work, relevant prior decisions, or explicit remember/forget requests; skip unrelated self-contained tasks.
+description: Recall and maintain source-backed project knowledge, user preferences, lessons, and task handoffs across Antigravity 2.0 standalone and Antigravity IDE conversations. Use for continuing project work, relevant prior decisions, or explicit remember/forget requests; skip unrelated self-contained tasks.
 ---
 
 # Persistent memory
@@ -9,6 +9,7 @@ Memory root: `{{MEMORY_DIR}}`.
 Helper: `{{SKILL_DIR}}/scripts/memory.py`.
 Use `python` (Python 3.12+); no packages, network, account or model changes required.
 This is user-managed file memory, separate from Antigravity's internal knowledge store.
+Both Antigravity 2.0 (standalone) and Antigravity IDE use this same installed skill and store. The `antigravity-ide` segment in the data path is a retained storage location, not a dependency on the IDE. For cross-app continuity, use the same Windows account and exact project root. Do not create app-specific duplicate stores or migrate notes just because the active app changed. If either app denies access, report the exact path/action; do not weaken permissions or silently switch stores.
 
 ## Recall
 

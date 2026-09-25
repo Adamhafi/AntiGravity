@@ -35,6 +35,16 @@ class InstallTests(unittest.TestCase):
         installer.install(self.home)
         self.assertEqual(installer.install(self.home)["created"], [])
 
+    def test_single_install_targets_both_apps_without_duplicate_stores(self):
+        result = installer.install(self.home)
+        self.assertEqual(result["supported_surfaces"], ["Antigravity 2.0 (standalone)", "Antigravity IDE"])
+        self.assertEqual(len(result["files"]), 3)
+        self.assertTrue(all('/.gemini/config/' in Path(p).as_posix() for p in result["files"]))
+        skill = Path(result["files"][0]).read_text(encoding="utf-8")
+        self.assertIn("Antigravity 2.0 (standalone)", skill)
+        self.assertIn("Antigravity IDE", skill)
+        self.assertIn(Path(result["memory_store"]).as_posix(), skill)
+
     def test_conflict_preserves_existing_file_and_writes_nothing_else(self):
         p = self.home / ".gemini/config/rules/persistent-memory.md"
         p.parent.mkdir(parents=True)
