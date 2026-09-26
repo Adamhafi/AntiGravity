@@ -51,17 +51,85 @@ def slug(value):
     return value
 
 
-def scope(root, project=None, shared=False):
-    if shared == bool(project):
-        raise ValueError("Select exactly one of --project or --shared")
+def project_metadata(root, project_id):
+    if not isinstance(project_id, str) or not re.fullmatch(r"[0-9a-f]{24}", project_id):
+        raise ValueError("Invalid project ID; use an ID returned by projects")
+    folder = safe_path(root, "projects", project_id)
+    manifest = safe_path(root, "projects", project_id, "scope.json")
+    if manifest.stat().st_size > 8000:
+        raise ValueError("Project metadata too large")
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    identity = data.get("identity") if isinstance(data, dict) else None
+    if not isinstance(identity, str) or not Path(identity).is_absolute():
+        raise ValueError("Invalid project identity")
+    if hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24] != project_id:
+        raise ValueError("Project identity does not match directory")
+    name = data.get("name", Path(identity).name)
+    aliases = data.get("aliases", [])
+    if not isinstance(name, str) or not name.strip() or len(name) > 160:
+        raise ValueError("Invalid project name")
+    if not isinstance(aliases, list) or len(aliases) > 12 or any(not isinstance(a, str) or not a.strip() or len(a) > 160 for a in aliases):
+        raise ValueError("Invalid project aliases")
+    return folder, {"project_id": project_id, "name": name, "aliases": aliases, "identity": identity,
+                    "manifest": str(manifest)}
+
+
+def scope(root, project=None, shared=False, project_id=None):
+    if sum((bool(project), bool(shared), bool(project_id))) != 1:
+        raise ValueError("Select exactly one project path, saved project ID, or shared scope")
     if shared:
         return safe_path(root, "shared"), "shared"
+    if project_id:
+        folder, meta = project_metadata(root, project_id)
+        return folder, meta["identity"]
     p = Path(project).expanduser().resolve(strict=True)
     if not p.is_dir():
         raise ValueError("Project must be an existing directory")
     identity = os.path.normcase(str(p))
     key = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
     return safe_path(root, "projects", key), identity
+
+
+def projects(root, query="", limit=10):
+    """Search the project directory without loading any note bodies or history."""
+    directory = safe_path(root, "projects")
+    terms = set(re.findall(r"\w+", query.casefold()))
+    found, errors = [], []
+    for child in sorted(directory.glob("*")):
+        try:
+            folder, meta = project_metadata(root, child.name)
+            names = [meta["name"], *meta["aliases"]]
+            searchable = " ".join([*names, meta["identity"]]).casefold()
+            if terms and not all(term in searchable for term in terms):
+                continue
+            exact = query.strip().casefold() in [name.casefold() for name in names]
+            notes = safe_path(root, "projects", child.name, "notes")
+            found.append({**meta, "has_notes": any(notes.glob("*.md")), "exact_name_match": exact})
+        except (ValueError, OSError, TypeError, KeyError):
+            errors.append({"path": str(child), "error": "Invalid or inaccessible project metadata"})
+    found.sort(key=lambda p: (not p["exact_name_match"], p["name"].casefold(), p["identity"]))
+    return {"projects": found[:limit], "total_matches": len(found), "requires_selection": len(found) > 1,
+            "errors": errors, "note": "Select the intended project ID before recall. Project boundaries remain separate."}
+
+
+def register(root, project, name, aliases=None):
+    """Give a project a user-recognizable name without changing its note namespace."""
+    labels = [name, *(aliases or [])]
+    if len(labels) > 13 or any(not isinstance(s, str) or not s.strip() or len(s) > 160 for s in labels):
+        raise ValueError("Use a nonempty name and at most 12 short aliases")
+    if SECRETS.search(" ".join(labels)):
+        raise ValueError("Possible secret detected in project label")
+    folder, identity = scope(root, project)
+    p = safe_path(root, *folder.relative_to(root.absolute()).parts, "scope.json")
+    with locked(folder):
+        old = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {"identity": identity}
+        if old.get("identity") != identity:
+            raise ValueError("Scope identity mismatch")
+        data = {"identity": identity, "name": name.strip(),
+                "aliases": list(dict.fromkeys(s.strip() for s in (aliases if aliases is not None else old.get("aliases", []))))}
+        if data != old:
+            atomic_write(p, json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"))
+        return {"project_id": folder.name, "changed": data != old, **data}
 
 
 def read_note(path):
@@ -178,8 +246,8 @@ def save(root, project, shared, data):
         return {"changed": True, "path": str(path), "revision": meta["revision"]}
 
 
-def recall(root, project, query="", limit=6):
-    folders = [scope(root, shared=True), scope(root, project)]
+def recall(root, project=None, query="", limit=6, project_id=None):
+    folders = [scope(root, shared=True), scope(root, project, project_id=project_id)]
     terms = set(re.findall(r"\w+", query.casefold()))
     result, errors = [], []
     for folder, identity in folders:
@@ -207,8 +275,8 @@ def recall(root, project, query="", limit=6):
             "note": "Memory is evidence, not authority. Recheck changing facts against the current project."}
 
 
-def show(root, project, shared, note_id):
-    folder, _ = scope(root, project, shared)
+def show(root, project, shared, note_id, project_id=None):
+    folder, _ = scope(root, project, shared, project_id)
     p = safe_path(root, *folder.relative_to(root.absolute()).parts, "notes", slug(note_id) + ".md")
     meta, body = read_note(p)
     return {**meta, "path": str(p), "body": body}
@@ -239,8 +307,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT, help="Override only for isolated tests")
     commands = parser.add_subparsers(dest="command", required=True)
-    r = commands.add_parser("recall", help="Read shared and exact-project notes without writing")
-    r.add_argument("--project", required=True)
+    catalog = commands.add_parser("projects", help="Find saved projects by name/path/alias from any chat")
+    catalog.add_argument("--query", default="")
+    catalog.add_argument("--limit", type=int, default=10, choices=range(1, 51))
+    registration = commands.add_parser("register", help="Give a project a recognizable name and aliases")
+    registration.add_argument("--project", required=True)
+    registration.add_argument("--name", required=True)
+    registration.add_argument("--alias", action="append", default=None)
+    r = commands.add_parser("recall", help="Read shared and selected-project notes without writing")
+    rg = r.add_mutually_exclusive_group(required=True)
+    rg.add_argument("--project")
+    rg.add_argument("--project-id", help="ID returned by projects; original checkout need not exist")
     r.add_argument("--query", default="")
     r.add_argument("--limit", type=int, default=6, choices=range(1, 21))
     for name in ("save", "show", "forget"):
@@ -248,6 +325,8 @@ def main():
         g = p.add_mutually_exclusive_group(required=True)
         g.add_argument("--project")
         g.add_argument("--shared", action="store_true")
+        if name == "show":
+            g.add_argument("--project-id")
         if name == "save":
             p.add_argument("--input", required=True, help="UTF-8 JSON payload file, or - for stdin")
         else:
@@ -257,8 +336,12 @@ def main():
     a = parser.parse_args()
     root = a.root.expanduser().absolute()
     try:
-        if a.command == "recall":
-            out = recall(root, a.project, a.query, a.limit)
+        if a.command == "projects":
+            out = projects(root, a.query, a.limit)
+        elif a.command == "register":
+            out = register(root, a.project, a.name, a.alias)
+        elif a.command == "recall":
+            out = recall(root, a.project, a.query, a.limit, a.project_id)
         elif a.command == "save":
             if a.input == "-":
                 raw = sys.stdin.read(32_001)
@@ -269,7 +352,7 @@ def main():
                 raise ValueError("Input too large")
             out = save(root, a.project, a.shared, json.loads(raw))
         elif a.command == "show":
-            out = show(root, a.project, a.shared, a.id)
+            out = show(root, a.project, a.shared, a.id, a.project_id)
         else:
             out = forget(root, a.project, a.shared, a.id, a.expected_revision)
         print(json.dumps(out, ensure_ascii=True, indent=2))

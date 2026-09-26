@@ -208,6 +208,92 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 1)
         self.assertNotIn("private_bad_json", proc.stderr)
 
+    def test_project_catalog_is_read_only_and_empty_initially(self):
+        self.assertEqual(m.projects(self.root)["projects"], [])
+        self.assertFalse(self.root.exists())
+
+    def test_catalog_discovers_existing_notes_without_migration(self):
+        self.save()
+        catalog = m.projects(self.root, "project-a")
+        self.assertEqual(catalog["total_matches"], 1)
+        self.assertTrue(catalog["projects"][0]["has_notes"])
+        self.assertNotIn("fixture-check", json.dumps(catalog))
+        self.assertFalse(catalog["requires_selection"])
+
+    def test_named_projects_and_aliases(self):
+        result = m.register(self.root, str(self.a), "Project X", ["旧项目", "Client Portal"])
+        for query in ("Project X", "旧项目", "client portal"):
+            self.assertEqual(m.projects(self.root, query)["projects"][0]["project_id"], result["project_id"])
+        self.save()
+        self.assertEqual(m.projects(self.root, "Project X")["projects"][0]["name"], "Project X")
+
+    def test_register_is_noop_and_preserves_aliases_when_omitted(self):
+        m.register(self.root, str(self.a), "X", ["alias"])
+        self.assertFalse(m.register(self.root, str(self.a), "X")["changed"])
+        self.assertEqual(m.projects(self.root, "alias")["total_matches"], 1)
+
+    def test_ambiguous_names_require_selection(self):
+        for p in (self.a, self.b):
+            m.register(self.root, str(p), "Project X")
+        out = m.projects(self.root, "Project X", limit=1)
+        self.assertEqual(out["total_matches"], 2)
+        self.assertTrue(out["requires_selection"])
+
+    def test_cross_project_recall_is_explicit_and_scoped(self):
+        self.save(body="Only Project A has this decision")
+        m.save(self.root, str(self.b), False, self.payload(body="Only Project B has this decision"))
+        project_id = m.projects(self.root, "project-a")["projects"][0]["project_id"]
+        out = m.recall(self.root, project_id=project_id)
+        self.assertIn("Project A", out["matches"][0]["excerpt"])
+        self.assertNotIn("Project B", json.dumps(out))
+        self.assertIn("Project B", m.recall(self.root, str(self.b))["matches"][0]["excerpt"])
+
+    def test_saved_project_read_survives_checkout_removal(self):
+        self.save()
+        project_id = m.projects(self.root, "project-a")["projects"][0]["project_id"]
+        self.a.rmdir()  # Empty test fixture only. Memory lives outside the checkout.
+        self.assertEqual(len(m.recall(self.root, project_id=project_id)["matches"]), 1)
+        self.assertIn("fixture-check", m.show(self.root, None, False, "build-command", project_id)["body"])
+
+    def test_saved_project_id_rejects_traversal_and_conflicting_scope(self):
+        with self.assertRaises(ValueError):
+            m.recall(self.root, project_id="../shared")
+        with self.assertRaises(ValueError):
+            m.recall(self.root, str(self.a), project_id="a" * 24)
+
+    def test_catalog_reports_bad_metadata_without_leaking_content(self):
+        self.save()
+        folder, _ = m.scope(self.root, str(self.a))
+        (folder / "scope.json").write_text('bad-private-content', encoding="utf-8")
+        out = m.projects(self.root)
+        self.assertEqual(len(out["errors"]), 1)
+        self.assertNotIn("bad-private-content", json.dumps(out))
+
+    def test_registry_rejects_mismatched_identity(self):
+        self.save()
+        folder, _ = m.scope(self.root, str(self.a))
+        (folder / "scope.json").write_text(json.dumps({"identity": str(self.b)}), encoding="utf-8")
+        with self.assertRaises(ValueError):
+            m.recall(self.root, project_id=folder.name)
+
+    def test_new_process_in_different_workspace_finds_project_by_name(self):
+        self.save(id="project-overview", body="Project X: used tests first; last step was validating the parser.")
+        m.register(self.root, str(self.a), "Project X")
+        cmd = [sys.executable, str(SCRIPT.resolve()), "--root", str(self.root)]
+        result = subprocess.run(cmd + ["projects", "--query", "Project X"], cwd=self.b,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        project_id = json.loads(result.stdout)["projects"][0]["project_id"]
+        result = subprocess.run(cmd + ["show", "--project-id", project_id, "--id", "project-overview"],
+                                cwd=self.b, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("used tests first", json.loads(result.stdout)["body"])
+
+    def test_project_labels_reject_obvious_secrets(self):
+        with self.assertRaisesRegex(ValueError, "secret"):
+            m.register(self.root, str(self.a), "Project X", ["password=fixture-secret"])
+        self.assertFalse(self.root.exists())
+
     def test_symlink_escape_rejected(self):
         folder, _ = m.scope(self.root, str(self.a))
         folder.mkdir(parents=True)

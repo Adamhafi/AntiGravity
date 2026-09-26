@@ -6,7 +6,9 @@ A lightweight, local memory layer for **Antigravity 2.0 (the regular standalone 
 
 ## Features
 
-- **Project isolation:** each resolved workspace path has its own memory namespace. Clones and worktrees remain separate.
+- **Recall from any chat:** ask about a named past project without reopening its workspace. A lightweight project directory finds its saved notes by name, path, or alias.
+- **Separate project storage:** each resolved workspace path has its own memory namespace. Clones and worktrees remain separate, but you can intentionally recall any of them.
+- **Remember how you worked:** milestone summaries capture your approach, constraints, decisions and reasons, verified changes, and stopping point. The agent is instructed to save these during opted-in work without a separate "remember this" prompt.
 - **Shared preferences:** only explicitly stated user preferences belong in shared memory.
 - **Source-backed notes:** readable Markdown with sources, timestamps, verification status, tags, and revision numbers.
 - **Selective recall:** keyword search returns bounded excerpts and paths, rather than loading every note.
@@ -30,7 +32,7 @@ The helper and installer have been tested locally on Windows with Python 3.13. O
 | Antigravity 2.0, regular standalone app | `~/.gemini/config/skills/` | `~/.gemini/config/rules/` | Uses the documented shared locations; fresh-session activation needs an in-app check |
 | Antigravity IDE | `~/.gemini/config/skills/` | `~/.gemini/config/rules/` | Uses the documented shared locations; fresh-session activation needs an in-app check |
 
-**Install once for both.** No separate IDE installation is required to use the package from standalone Antigravity. Both apps must run under the same account and use the same absolute project root to recall the same project notes. A different clone or worktree intentionally has different project memory.
+**Install once for both.** No separate IDE installation is required to use the package from standalone Antigravity. Both apps must run under the same account to use the same memory store. Save using a consistent project root; later conversations can find that project by name even outside its folder. A different clone or worktree intentionally has a separate namespace.
 
 The memory directory retains the initial name `~/.gemini/antigravity-ide/user-memory` to avoid splitting or relocating existing notes. It is an ordinary directory used by the Python helper, not an IDE API dependency. The installer does not enable unrestricted filesystem access; resolve any denied memory-path access narrowly in the affected app.
 
@@ -81,18 +83,33 @@ The rule asks the agent to use memory automatically. That is **model-mediated be
 2. Ask: **"Remember this project-only test note: the smoke-test label is cedar-orbit-47. Use note ID memory-smoke-test, mark it user-confirmed, and do not modify source code. Show the saved memory path."**
 3. Open another fresh conversation in the same project and ask: **"What smoke-test label did I ask you to remember? Retrieve it from persistent memory and show the source file."**
 4. Check visible tool activity for the actual saved-note read. If automatic selection fails, explicitly ask it to read the installed `persistent-memory/SKILL.md`. Explicit invocation and automatic selection are different checks.
-5. In a different project, the first project's test note should not appear.
+5. In a different project, ordinary current-project recall should not load the first project's notes. Explicitly ask about the first project **by name**, and its stored note should be discoverable through `projects --query`, then `recall --project-id`.
 6. Clean up in the original project: **"Forget memory-smoke-test and its local revision history. Do not modify source code."**
 
 For a cross-app check, save the test note in standalone Antigravity, then perform step 3 in Antigravity IDE with the **same project folder**, or vice versa. Verify the visible read of the same note file. Python tests exercise the shared storage, not either application's model-driven activation.
 
 Use the same actual project root across conversations. If Antigravity denies a path or command, resolve only that access issue rather than disabling permissions globally.
 
+## Remember Project X from a new chat
+
+The intended experience is:
+
+1. Work on Project X. Before finishing a meaningful milestone, the agent updates `project-overview` and any useful task-specific lessons or handoffs.
+2. Start a new IDE chat, in the same project, a different project, or without that old checkout open.
+3. Ask: **"What did we do on Project X, how did we approach it, and where did we stop?"**
+4. The agent searches the saved project directory, selects X, reads its relevant notes, and answers with sources and any outstanding uncertainty.
+
+You do not need to repeat the old chat or give the helper command. A first saved note automatically makes its folder name discoverable. For a friendlier project name, use `register` once. Existing memory manifests remain compatible without importing or rewriting their notes. If multiple projects have the same name, the agent must disambiguate rather than mix them.
+
+This remembers **saved summaries**, not every conversation verbatim. Automatic writing and retrieval still depend on the IDE agent following its rule. A closed/crashed conversation with no saved milestone has no recoverable memory through this package. Older unsaved chats are not automatically imported.
+
 ## Everyday prompts
 
 - "Remember this project decision and why we made it."
 - "Continue from the saved handoff, checking it against the current files."
 - "What caused the previous build failure, and what fix was verified?"
+- "What did we decide on Project X, and where did we stop?"
+- "How did I approach testing in the Client Portal project?"
 - "Do not remember this conversation."
 - "Forget the saved note about X and its local history."
 
@@ -109,6 +126,15 @@ $project = (Get-Location).Path
 # Recall is read-only. Omit --query to see recent notes.
 python $memory recall --project $project --query 'build tests'
 python $memory show --project $project --id 'test-command'
+
+# Discover another remembered project without changing the current workspace.
+python $memory projects --query 'Project X'
+# Replace ID_FROM_PROJECTS with the selected result's actual project_id.
+python $memory recall --project-id 'ID_FROM_PROJECTS'
+python $memory show --project-id 'ID_FROM_PROJECTS' --id 'project-overview'
+
+# Optional friendly name; this does not merge or move the project's notes.
+python $memory register --project $project --name 'Project X' --alias 'Client Portal'
 
 # Read a UTF-8 JSON payload, or use --input - for stdin.
 python $memory save --project $project --input 'note.json'
@@ -171,7 +197,7 @@ From this repository's root:
 python -m unittest discover -s tests -v
 ```
 
-Tests use temporary directories, not your live memory store. They cover project isolation, shared preferences, revision checks, history, duplicate saves, keyword recall, malformed notes, Unicode, representative secret rejection, forget behavior, CLI persistence across processes, path traversal, and installer behavior. Symlink/junction tests depend on the operating system and available privileges.
+Tests use temporary directories, not your live memory store. They cover project isolation, shared preferences, cross-project discovery and explicit recall, aliases, ambiguous names, missing checkouts, revision checks, history, duplicate saves, keyword recall, malformed notes, Unicode, representative secret rejection, forget behavior, CLI persistence across processes, path traversal, and installer behavior. A separate-process test finds Project X by name while running from Project Y's directory. Symlink/junction tests depend on the operating system and available privileges.
 
 Fresh-session automatic activation must be tested separately using the in-app procedure above.
 
